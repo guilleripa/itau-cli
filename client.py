@@ -4,6 +4,7 @@ import datetime
 import json
 import logging
 import re
+from urllib.parse import urlencode
 
 import aiohttp
 import requests
@@ -17,8 +18,7 @@ ITAU_DOMAIN = "https://www.itaulink.com.uy"
 
 class ItauClient:
 
-    LOGIN_URL = ITAU_DOMAIN + "/appl/servlet/FeaServlet"
-    SECOND_LOGIN_URL = ITAU_DOMAIN + "/trx/loginParalelo"
+    LOGIN_URL = ITAU_DOMAIN + "/trx/doLogin"
     MAIN_URL = ITAU_DOMAIN + "/trx/home"
     HISTORY_ACCOUNT_URL = (
         ITAU_DOMAIN + "/trx/cuentas/{type}/{hash}/{month}/{year}/consultaHistorica"
@@ -142,8 +142,8 @@ class ItauClient:
     def parse_transactions(self, details_json):
         transactions = []
         data = details_json["itaulink_msg"]["data"]
-        if "movimientosHistoricos" in data:
-            movements = data["movimientosHistoricos"]["movimientos"]
+        if "mapaHistoricos" in data:
+            movements = data["mapaHistoricos"]["movimientosHistoricos"]["movimientos"]
         elif "movimientosMesActual" in data:
             movements = data["movimientosMesActual"]["movimientos"]
 
@@ -203,9 +203,12 @@ class ItauClient:
         return movements
 
     def get_credit_cards(self):
-        r = requests.post(self.CREDIT_CARD_URL, cookies=self.cookies)
-        credit_cards_json = r.json()
-        self.parse_credit_cards(credit_cards_json)
+        try:
+            r = requests.post(self.CREDIT_CARD_URL, cookies=self.cookies)
+            credit_cards_json = r.json()
+            self.parse_credit_cards(credit_cards_json)
+        except Exception as e:
+            self.credit_cards = []
 
         logger.debug("Found {} credit cards.".format(len(self.credit_cards)))
 
@@ -283,15 +286,20 @@ class ItauClient:
         payload = "0:{}:{}:{}-{}:".format(
             account["original"]["moneda"],
             account["hash"],
-            month_date.strftime("%m"),
-            month_date.strftime("%y"),
+            today.strftime("%m"),
+            today.strftime("%y"),
         )
-
         try:
             payload = bytes(payload, "utf-8")
             cookies = dict(self.cookies)
-            async with aiohttp.ClientSession(cookies=cookies) as session:
-                async with session.post(url, data=payload) as r:
+            async with aiohttp.ClientSession(
+                cookies=cookies,
+                headers={"Accept": "application/json, text/javascript, */*; q=0.01"},
+            ) as session:
+                async with session.post(
+                    url,
+                    data=payload,
+                ) as r:
                     trans_json = await r.json()
                     return self.parse_transactions(trans_json)
         except Exception as e:
@@ -302,7 +310,7 @@ class ItauClient:
 
     def account_detail(self, account, from_date=None):
         if not from_date:
-            from_date = datetime.date(2013, 5, 1)
+            from_date = datetime.date(2016, 5, 1)
 
         today = datetime.date.today()
         transactions = []
@@ -414,25 +422,37 @@ class ItauClient:
                         )
 
     def login(self):
-        r = requests.post(
-            self.LOGIN_URL,
-            data={
-                "segmento": "panelPersona",
-                "tipo_documento": "1",
-                "nro_documento": self.username,
-                "pass": self.password,
-                "password": self.password,
-                "id": "login",
-                "tipo_usuario": "R",
-            },
-        )
+        data = {
+            "segmento": "panelPersona",
+            "empresa_aux": self.username,
+            "pwd_empresa": self.password,
+            "usuario_aux": "",
+            "tipo_documento": 1,
+            "nro_documento": self.username,
+            "pass": self.password,
+            "password": self.password,
+            "pwd_usuario": "",
+            "empresa": "",
+            "usuario": "",
+            "id": "login",
+            "tipo_usuario": "R",
+        }
 
-        tree = html.fromstring(r.content)
-        data = {}
-        for input_element in tree.xpath("//input"):
-            data[input_element.name] = input_element.value
+        headers = {
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Accept-Language": "es-ES,es;q=0.8,en;q=0.6,pt;q=0.4",
+            "Cache-Control": "max-age=0",
+            "Connection": "keep-alive",
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Origin": "https://www.itau.com.uy",
+            "Referer": "https://www.itau.com.uy/inst/",
+            "Upgrade-Insecure-Requests": "1",
+        }
 
-        r = requests.post(self.SECOND_LOGIN_URL, data=data)
+        login_data = urlencode(data)
+
+        r = requests.post(self.LOGIN_URL, data=login_data, headers=headers)
 
         self.cookies = r.history[0].cookies
 
