@@ -23,6 +23,10 @@ class ItauClient:
     HISTORY_ACCOUNT_URL = (
         ITAU_DOMAIN + "/trx/cuentas/{type}/{hash}/{month}/{year}/consultaHistorica"
     )
+    TRANSACTION_DETAIL_URL = (
+        ITAU_DOMAIN
+        + "/trx/cuentas/{type}/{id}/{hash}/{day}/{month}/{year}/cargarComprobante"
+    )
     CURRENT_ACCOUNT_URL = ITAU_DOMAIN + "/trx/cuentas/{type}/{hash}/mesActual"
     CREDIT_CARD_URL = ITAU_DOMAIN + "/trx/tarjetas/credito"
     CREDIT_CARD_MOV_URL = (
@@ -92,7 +96,37 @@ class ItauClient:
 
             self.credit_cards.append(cleaned_cc)
 
-    def parse_transaction(self, raw_tx):
+    def parse_transaction_details(self, tx_detail):
+        return tx_detail["itaulink_msg"]["data"]["form"]["beneficiario"].split(None, 1)[
+            -1
+        ]
+
+    def get_transaction_details(self, tx, account, month_date):
+        url = self.TRANSACTION_DETAIL_URL.format(
+            type=account["account_type_id"],
+            id=tx["description"],
+            hash=account["hash"],
+            day=tx["date"].strftime("%d"),
+            month=tx["date"].strftime("%b").upper(),
+            year=tx["date"].strftime("%Y"),
+        )
+        try:
+            payload = bytes("{}", "utf-8")
+            cookies = dict(self.cookies)
+            r = requests.post(
+                url,
+                data=payload,
+                headers={"Accept": "application/json, text/javascript, */*; q=0.01"},
+                cookies=cookies,
+            )
+            return self.parse_transaction_details(r.json())
+        except Exception as e:
+            logger.debug(
+                "Error fetching {} details. Ignoring".format(month_date.isoformat()[:8])
+            )
+            return ""
+
+    def parse_transaction(self, raw_tx, account, month_date):
         if raw_tx["tipo"] == "D":
             transaction_type = "debit"
         elif raw_tx["tipo"] == "C":
@@ -110,6 +144,11 @@ class ItauClient:
             "date": self.parse_date(raw_tx["fecha"]),
             "meta": {},
         }
+
+        if "DEB. CAMBIOSS" in tx["description"]:
+            tx["meta"]["beneficiary"] = self.get_transaction_details(
+                tx, account, month_date
+            )
 
         if tx["description"].startswith("COMPRA "):
             # Debit card purchase
@@ -139,7 +178,7 @@ class ItauClient:
     def only_num(self, txt):
         return re.sub("[^0-9]", "", txt)
 
-    def parse_transactions(self, details_json):
+    def parse_transactions(self, details_json, account, month_date):
         transactions = []
         data = details_json["itaulink_msg"]["data"]
         if "mapaHistoricos" in data:
@@ -148,7 +187,7 @@ class ItauClient:
             movements = data["movimientosMesActual"]["movimientos"]
 
         for raw_transaction in movements:
-            tx = self.parse_transaction(raw_transaction)
+            tx = self.parse_transaction(raw_transaction, account, month_date)
             if tx:
                 transactions.append(tx)
 
@@ -301,7 +340,7 @@ class ItauClient:
                     data=payload,
                 ) as r:
                     trans_json = await r.json()
-                    return self.parse_transactions(trans_json)
+                    return self.parse_transactions(trans_json, account, month_date)
         except Exception as e:
             logger.debug(
                 "Error fetching {}. Ignoring".format(month_date.isoformat()[:8])
@@ -348,6 +387,7 @@ class ItauClient:
                         "atm",
                         "bank transfer",
                         "tax return",
+                        "beneficiary",
                     ]
                 )
                 for tx in account["transactions"]:
@@ -374,6 +414,7 @@ class ItauClient:
                             tx["meta"].get("atm"),
                             tx["meta"].get("bank_transfer"),
                             tx["meta"].get("tax_return"),
+                            tx["meta"].get("beneficiary"),
                         ]
                     )
 
@@ -503,6 +544,7 @@ class ItauClient:
                     "date",
                     "description",
                     "additional description",
+                    "beneficiary",
                     "debit",
                     "credit",
                     "balance",
@@ -519,10 +561,11 @@ class ItauClient:
                     credit = amount
 
                 logger.info(
-                    "{:10s} | {:24s} | {:30s} | {:8s} | {:8s} | {:8s}".format(
+                    "{:10s} | {:24s} | {:30s} | {:8s} | {:8s} | {:8s} | {:8s}".format(
                         tx["date"].isoformat(),
                         tx["description"],
                         tx["additional_description"],
+                        tx["meta"].get("beneficiary", ""),
                         debit,
                         credit,
                         "{:.2f}".format(tx["balance"]),
