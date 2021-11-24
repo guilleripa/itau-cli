@@ -4,6 +4,7 @@ import datetime
 import json
 import logging
 import re
+from pathlib import Path
 from urllib.parse import urlencode
 
 import aiohttp
@@ -367,10 +368,11 @@ class ItauClient:
 
         return transactions
 
-    def save(self):
+    def save(self, path="."):
+        path = Path(path)
         for account in self.accounts:
             filename = "{}-{}.csv".format(account["id"], account["currency_id"])
-            with open(filename, "w") as f:
+            with open(path / filename, "w") as f:
                 writer = csv.writer(f, delimiter="\t")
                 writer.writerow(
                     [
@@ -421,7 +423,7 @@ class ItauClient:
         for cc in self.credit_cards:
             for currency, movements in cc["movements"].items():
                 filename = "{}-{}-{}.csv".format(cc["brand"], currency, cc["number"])
-                with open(filename, "w") as f:
+                with open(path / filename, "w") as f:
                     writer = csv.writer(f, delimiter="\t")
                     writer.writerow(
                         [
