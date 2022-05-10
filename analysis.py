@@ -1,6 +1,9 @@
 # %%
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+
+plt.rcParams["figure.figsize"] = (15, 9)
 
 VIEW_COLS = [
     "description",
@@ -49,6 +52,7 @@ historic_dolar["date"] = pd.to_datetime(
 historic_dolar["Compra"] = historic_dolar["Compra"].astype(float)
 historic_dolar["Venta"] = historic_dolar["Venta"].astype(float)
 historic_dolar["usd_inter"] = (historic_dolar["Compra"] + historic_dolar["Venta"]) / 2
+historic_dolar[historic_dolar["date"] > FIRST_MONTH].plot(x="date", y="usd_inter")
 # %%
 pesos = pd.read_csv("results/1401456-UYU.csv", header=0, sep="\t", parse_dates=["date"])
 pesos = pd.merge(pesos, historic_dolar[["date", "usd_inter"]], how="left", on="date")
@@ -77,6 +81,8 @@ unidos = pd.concat([pesos, dol]).sort_values(by="date").reset_index()
 unidos = unidos[unidos["description"] != "DEP. BUZON EFE012800425"]
 
 # %%
+unidos["op_value"] = unidos["credit"].fillna(0) - unidos["debit"].fillna(0)
+# %%
 idx = pd.date_range(unidos["date"].min(), unidos["date"].max())
 pesos_range = pd.Series(0, index=idx)
 dolar_range = pd.Series(0, index=idx)
@@ -90,18 +96,10 @@ dolar_range[dolar_range == 0] = np.nan
 dolar_range = dolar_range.ffill().bfill()
 # %%
 united_balance = pesos_range + dolar_range
-united_balance.plot()
+ax = united_balance.plot()
+ax.ticklabel_format(style="plain")
 # %%
-monthly_savings = unidos.groupby("year_month")["op_value"].sum()
-monthly_savings.plot()
-mean_monthly_saving = monthly_savings.mean()
-
-
-# %%
-income_desc_keywords = [
-    "D.G.I",
-    "B.P.S",
-]
+income_desc_keywords = ["D.G.I", "B.P.S", "TRASPASO DE 3042446MTPAY"]
 income_detail_desc_keywords = ["Pento", "IVA Diciembre"]
 income_honoraries = ["Eliana Bertolotti"]
 income_df = unidos[
@@ -129,15 +127,23 @@ monthly_income.plot(), monthly_income
 # %%
 monthly_spending = -spending_df.groupby("year_month")["op_value"].sum()
 monthly_spending = monthly_spending / montly_usd_mean[monthly_spending.index]
+monthly_spending = monthly_spending.rolling(2).sum() / 2
+monthly_spending.plot(), monthly_spending
 # %%
 monthly_savings = monthly_income - monthly_spending
-monthly_savings.plot(), monthly_savings
+sign = monthly_savings.map(np.sign)
+diff1 = sign.diff(periods=1).fillna(0)
+diff2 = sign.diff(periods=-1).fillna(0)
 # %%
-spending_df[spending_df["year_month"] == "2021-03"][VIEW_COLS]
+monthly_savings.plot(
+    kind="bar", color=(monthly_savings > 0).map({True: "g", False: "r"})
+)
+
 # %%
-spending_df[spending_df["year_month"] == "2021-09"][VIEW_COLS].sort_values(
+spending_df[spending_df["year_month"] == "2022-02"][VIEW_COLS]
+# %%
+spending_df[spending_df["year_month"] == "2022-02"][VIEW_COLS].sort_values(
     by="op_value"
 ).iloc[0:50]
-# %%
 
 # %%
